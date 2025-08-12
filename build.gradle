@@ -11,7 +11,7 @@ def nexusUsername = System.getenv('NEXUS_USERNAME') ?: ''
 def nexusPassword = System.getenv('NEXUS_PASSWORD') ?: ''
 
 group = 'com.example'
-version = '1.0.0'
+version = '1.0.0-SNAPSHOT'
 sourceCompatibility = '17'
 
 repositories {
