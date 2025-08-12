@@ -1,16 +1,19 @@
+// Declare variables to read env vars set in Jenkins
+def sonarToken = System.getenv('SONAR_TOKEN') ?: ''
+def nexusUsername = System.getenv('NEXUS_USERNAME') ?: ''
+def nexusPassword = System.getenv('NEXUS_PASSWORD') ?: ''
+
 plugins {
-    id 'org.springframework.boot' version '2.5.2'
-    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
     id 'java'
-    id 'war'
-    id "maven-publish" // Nexus plugin
-    id "org.sonarqube" version "2.7" // Sonar plugin
-    id "checkstyle"
+    id 'org.springframework.boot' version '3.1.0'
+    id 'io.spring.dependency-management' version '1.1.0'
+    id 'org.sonarqube' version '4.3.0.3225'
+    id 'maven-publish'
 }
 
 group = 'com.example'
-version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '1.8'
+version = '1.0.0'
+sourceCompatibility = '17'
 
 repositories {
     mavenCentral()
@@ -18,48 +21,43 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    providedRuntime 'org.springframework.boot:spring-boot-starter-tomcat'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+sonarqube {
+    properties {
+        property "sonar.sourceEncoding", "UTF-8"
+        property "sonar.projectName", "Gradle-Build"
+        property "sonar.projectKey", "Gradle-Build"
+        property "sonar.host.url", "http://172.31.2.62:9000"
+        property "sonar.login", sonarToken
+    }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            artifact bootJar
+        }
+    }
+    repositories {
+        maven {
+            url = uri("http://172.31.14.16:8081/repository/Gradle-Artifact/")
+            allowInsecureProtocol = true
+            credentials {
+                username = nexusUsername
+                password = nexusPassword
+            }
+        }
+    }
 }
 
 test {
     useJUnitPlatform()
 }
 
-// Checkstyle SAST tool for compliant with specified coding rules
-checkstyle {
-  toolVersion = '6.16.1'
-  config = rootProject.resources.text.fromFile('checkstyle/rules/rules.xml')
-  ignoreFailures = true
-}
-
-// SonarQube Code Analysis Config
-sonarqube {
-    properties {
-        property "sonar.sourceEncoding", "UTF-8"
-                property "sonar.projectName", "Gradle-Build"
-                property "sonar.host.url", "http://172.31.2.62:9000"
-                property "sonar.login", "2b18e66c4d5322c704d0ef9154b071b46a2ff5dc"
+tasks.withType(PublishToMavenRepository) {
+    doFirst {
+        println 'Publishing artifacts to Nexus...'
     }
 }
-
-// Nexus Upload
-publishing {
-    publications {
-        maven(MavenPublication) {
-
-            // bootJar is the default build task configured by Spring Boot
-            artifact bootJar
-        }
-    }
-    repositories {
-        maven {
-            url = "http://172.31.14.16:8081/repository/Gradle-Artifact/"
-            credentials {
-                username "admin"
-                password "admin"
-            }
-        }
-    }
-}
-
