@@ -1,4 +1,3 @@
-// Declare variables to read env vars set in Jenkins
 def sonarToken = System.getenv('SONAR_TOKEN') ?: ''
 def nexusUsername = System.getenv('NEXUS_USERNAME') ?: ''
 def nexusPassword = System.getenv('NEXUS_PASSWORD') ?: ''
@@ -37,7 +36,10 @@ sonarqube {
 publishing {
     publications {
         maven(MavenPublication) {
-            artifact bootJar
+            groupId = project.group
+            artifactId = 'your-artifact-id'
+            version = project.version
+            artifact(tasks.bootJar)
         }
     }
     repositories {
@@ -59,5 +61,7 @@ test {
 tasks.withType(PublishToMavenRepository) {
     doFirst {
         println 'Publishing artifacts to Nexus...'
+        println "Using Nexus username: ${nexusUsername ? '****' : 'NOT SET'}"
+        println "Using Sonar token: ${sonarToken ? '****' : 'NOT SET'}"
     }
 }
