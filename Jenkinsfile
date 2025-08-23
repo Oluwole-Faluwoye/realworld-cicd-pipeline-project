@@ -6,123 +6,127 @@ def COLOR_MAP = [
 
 pipeline {
     agent any
-    environment { 
-        WORKSPACE = "${env.WORKSPACE}" 
-        NEXUS_PRIVATE_IP = '172.31.38.223' // Replace with your Nexus EC2 private IP
-    }
-    tools { 
-        maven 'localMaven'; 
-        jdk 'localJdk' 
+
+    // ---------------- Environment ----------------
+    environment {
+        WORKSPACE      = "${env.WORKSPACE}"
+        GIT_REPO       = credentials('GIT_REPO')       // Git repository URL
+        NEXUS_URL      = credentials('NEXUS_URL')      // Nexus server URL
+        SONAR_HOST_URL = credentials('SONAR_HOST_URL') // SonarQube server URL
     }
 
-    // Helper function to run Maven safely
-    def runMaven = { mavenGoal ->
-        withCredentials([usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+    // ---------------- Tools ----------------
+    tools {
+        maven 'localMaven'
+        jdk 'localJdk'
+    }
+
+    // ---------------- Parameters ----------------
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build. Leave empty to detect automatically')
+    }
+
+    // ---------------- Helper Function: Maven ----------------
+    def runMaven = { mavenGoal, nexusUrl ->
+        withCredentials([
+            usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
+            string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')
+        ]) {
             configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
                 script {
-                    TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
+                    def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
                     try {
                         sh """
                         cp \$MAVEN_SETTINGS $TMP_SETTINGS
                         sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                         sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                        sed -i 's|\\\${nexus_private_ip}|$NEXUS_PRIVATE_IP|g' $TMP_SETTINGS
+                        sed -i 's|\\\${nexus_private_ip}|$nexusUrl|g' $TMP_SETTINGS
                         mvn $mavenGoal --settings $TMP_SETTINGS
                         """
-                    } finally {
-                        sh "rm -f $TMP_SETTINGS"
-                    }
+                    } finally { sh "rm -f $TMP_SETTINGS" }
                 }
             }
         }
     }
 
     stages {
-        stage('Build') { 
-            steps { runMaven('clean package') } 
-            post { success { archiveArtifacts artifacts: '**/*.war' } } 
-        }
 
-        stage('Unit Test') { steps { runMaven('test') } }
-
-        stage('Integration Test') { steps { runMaven('verify -DskipUnitTests') } }
-
-        stage('Checkstyle Analysis') { 
-            steps { runMaven('checkstyle:checkstyle') } 
-            post { success { echo 'Generated Checkstyle Analysis Result' } } 
-        }
-
-        stage('SonarQube Inspection') {
+        stage('Checkout') {
             steps {
-                withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
-                    runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=http://172.31.1.44:9000 -Dsonar.login=$SONAR_TOKEN")
+                script {
+                    // Hybrid branch detection:
+                    // 1. Use BRANCH_NAME parameter if provided (manual build)
+                    // 2. Else use env.BRANCH_NAME from multibranch pipeline or webhook
+                    // 3. Fallback to 'main'
+                    def branchToBuild = params.BRANCH_NAME?.trim() ?: env.BRANCH_NAME ?: 'main'
+                    echo "Building branch: ${branchToBuild}"
+
+                    withCredentials([usernamePassword(credentialsId: 'Git-Credential', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                        git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
+                    }
                 }
             }
         }
 
-        stage('SonarQube GateKeeper') { 
-            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } } 
+        stage('Build') { 
+            steps { runMaven('clean package', NEXUS_URL) } 
+            post { success { archiveArtifacts artifacts: '**/*.war' } } 
         }
 
-        stage('Nexus Artifact Uploader') {
+        stage('Unit Test') { steps { runMaven('test', NEXUS_URL) } }
+        stage('Integration Test') { steps { runMaven('verify -DskipUnitTests', NEXUS_URL) } }
+        stage('Checkstyle Analysis') { steps { runMaven('checkstyle:checkstyle', NEXUS_URL) } }
+
+        stage('SonarQube Inspection') {
+            steps {
+                withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
+                    runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=$SONAR_TOKEN", NEXUS_URL)
+                }
+            }
+        }
+
+        stage('SonarQube GateKeeper') {
+            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } }
+        }
+
+        stage('Nexus Artifact Upload') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
                     nexusArtifactUploader(
                         nexusVersion: 'nexus3',
                         protocol: 'http',
-                        nexusUrl: "${NEXUS_PRIVATE_IP}:8081",
+                        nexusUrl: NEXUS_URL,
                         groupId: 'webapp',
                         version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
                         repository: 'maven-project-releases',
                         credentialsId: 'Nexus-Credential',
-                        artifacts: [[
-                            artifactId: 'webapp', 
-                            classifier: '', 
-                            file: "${WORKSPACE}/webapp/target/webapp.war", 
-                            type: 'war'
-                        ]]
+                        artifacts: [[artifactId: 'webapp', classifier: '', file: "${WORKSPACE}/webapp/target/webapp.war", type: 'war']]
                     )
                 }
             }
         }
 
-        stage('Deploy to Development') { 
-            environment { HOSTS='dev' } 
-            steps { deployAnsible(HOSTS) } 
-        }
+        stage('Deploy to Development') { steps { deployAnsible('dev') } }
+        stage('Deploy to Staging') { steps { deployAnsible('stage') } }
+        stage('QA Approval') { steps { input('Proceed to Production?') } }
+        stage('Deploy to Production') { steps { deployAnsible('prod') } }
 
-        stage('Deploy to Staging') { 
-            environment { HOSTS='stage' } 
-            steps { deployAnsible(HOSTS) } 
-        }
-
-        stage('QA Approval') { 
-            steps { input('Do you want to proceed to Production?') } 
-        }
-
-        stage('Deploy to Production') { 
-            environment { HOSTS='prod' } 
-            steps { deployAnsible(HOSTS) } 
-        }
     }
 
     post {
         always {
             slackSend channel: '#af-cicd-pipeline',
                       color: COLOR_MAP[currentBuild.currentResult],
-                      message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nTimestamp: ${env.BUILD_TIMESTAMP}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                      message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
         }
     }
 }
 
-// ---------------- Helper Function ----------------
+// ---------------- Helper Function: Ansible ----------------
 def deployAnsible(hosts) {
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         sh """
-        ansible-playbook \
-        -i ${WORKSPACE}/ansible-config/aws_ec2.yaml \
-        ${WORKSPACE}/deploy.yaml \
-        --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$hosts workspace_path=$WORKSPACE"
+        ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$hosts workspace_path=$WORKSPACE"
         """
     }
 }
