@@ -21,7 +21,7 @@ pipeline {
         jdk 'localJdk'
     }
 
-    // ---------------- Parameters ----------------
+    // -------------- Parameters ---------------
     parameters {
         string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build. Leave empty to detect automatically')
     }
