@@ -7,20 +7,25 @@ def COLOR_MAP = [
 pipeline {
     agent any
 
+    // ---------------- Environment ----------------
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
-        NEXUS_URL      = credentials('NEXUS_URL')      // Nexus server URL
-        SONAR_HOST_URL = credentials('SONAR_HOST_URL') // SonarQube server URL
+        SONAR_HOST_URL = credentials('SONAR-Host-URL')  // SonarQube token stored as Secret Text
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
+        NEXUS_URL      = 'http://your-nexus-url:8081'  // Replace with your Nexus URL
+        SLACK_CHANNEL  = '#af-cicd-pipeline-2'
     }
 
+    // ---------------- Tools ----------------
     tools {
         maven 'localMaven'
         jdk 'localJdk'
     }
 
+    // -------------- Parameters ---------------
     parameters {
-        string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build')
+        string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build. Leave empty to detect automatically')
+        booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable this if using private Git repo')
     }
 
     stages {
@@ -29,7 +34,7 @@ pipeline {
             steps {
                 script {
                     // ---------------- Helper Function: Maven ----------------
-                    def runMaven = { mavenGoal, nexusUrl ->
+                    def runMaven = { mavenGoal ->
                         withCredentials([
                             usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
                             string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')
@@ -41,7 +46,7 @@ pipeline {
                                     cp \$MAVEN_SETTINGS $TMP_SETTINGS
                                     sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                                     sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                                    sed -i 's|\\\${nexus_private_ip}|$nexusUrl|g' $TMP_SETTINGS
+                                    sed -i 's|\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
                                     mvn $mavenGoal --settings $TMP_SETTINGS
                                     """
                                 } finally { sh "rm -f $TMP_SETTINGS" }
@@ -50,10 +55,11 @@ pipeline {
                     }
 
                     // ---------------- Helper Function: Ansible ----------------
-                    def deployAnsible = { hosts ->
+                    def deployAnsible = { envName ->
                         withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
                             sh """
-                            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$hosts workspace_path=$WORKSPACE"
+                            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                            --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$envName workspace_path=$WORKSPACE"
                             """
                         }
                     }
@@ -67,14 +73,11 @@ pipeline {
                     def branchToBuild = params.BRANCH_NAME?.trim() ?: env.BRANCH_NAME ?: 'main'
                     echo "Building branch: ${branchToBuild}"
 
-                    // ---------------- Conditional Git Clone ----------------
-                    if (Jenkins.instance.getCredential('Git-Credential')) {
-                        // Private repo with credentials
+                    if (params.USE_GIT_CREDENTIAL) {
                         withCredentials([usernamePassword(credentialsId: 'Git-Credential', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
                             git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
                         }
                     } else {
-                        // Public repo, no credentials
                         git branch: branchToBuild, url: GIT_REPO
                     }
                 }
@@ -82,25 +85,31 @@ pipeline {
         }
 
         stage('Build') {
-            steps { script { runMaven('clean package', NEXUS_URL) } }
+            steps { script { runMaven('clean package') } }
             post { success { archiveArtifacts artifacts: '**/*.war' } }
         }
 
-        stage('Unit Test') { steps { script { runMaven('test', NEXUS_URL) } } }
-        stage('Integration Test') { steps { script { runMaven('verify -DskipUnitTests', NEXUS_URL) } } }
-        stage('Checkstyle Analysis') { steps { script { runMaven('checkstyle:checkstyle', NEXUS_URL) } } }
+        stage('Unit Test') {
+            steps { script { runMaven('test') } }
+        }
+
+        stage('Integration Test') {
+            steps { script { runMaven('verify -DskipUnitTests') } }
+        }
+
+        stage('Checkstyle Analysis') {
+            steps { script { runMaven('checkstyle:checkstyle') } }
+        }
 
         stage('SonarQube Inspection') {
             steps {
-                script {
-                    withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
-                        runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=$SONAR_TOKEN", NEXUS_URL)
-                    }
-                }
+                script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") }
             }
         }
 
-        stage('SonarQube GateKeeper') { steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } } }
+        stage('SonarQube GateKeeper') {
+            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } }
+        }
 
         stage('Nexus Artifact Upload') {
             steps {
@@ -122,18 +131,20 @@ pipeline {
         }
 
         stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
-        stage('Deploy to Staging') { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval') { steps { input('Proceed to Production?') } }
-        stage('Deploy to Production') { steps { script { deployAnsible('prod') } } }
+        stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
+        stage('QA Approval')            { steps { input('Proceed to Production?') } }
+        stage('Deploy to Production')   { steps { script { deployAnsible('prod') } } }
 
     }
 
     post {
         always {
-            slackSend channel: '#af-cicd-pipeline-2',
-                      color: COLOR_MAP[currentBuild.currentResult],
-                      tokenCredentialId: 'Slack-Token',
-                      message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+            withCredentials([string(credentialsId: 'Slack-Token', variable: 'SLACK_TOKEN')]) {
+                slackSend channel: SLACK_CHANNEL,
+                          color: COLOR_MAP[currentBuild.currentResult],
+                          tokenCredentialId: 'Slack-Token',
+                          message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+            }
         }
     }
 }
