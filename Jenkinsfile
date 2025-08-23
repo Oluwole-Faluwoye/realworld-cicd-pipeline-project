@@ -22,27 +22,8 @@ pipeline {
     }
 
     parameters {
-        // Dropdown of branches (Active Choices Plugin required)
-        [$class: 'CascadeChoiceParameter',
-         choiceType: 'PT_SINGLE_SELECT',
-         description: 'Select branch to build (manual build only)',
-         name: 'BRANCH_NAME',
-         randomName: 'choice-parameter-123456',
-         script: [
-            $class: 'GroovyScript',
-            fallbackScript: [classpath: [], sandbox: false, script: 'return ["${DEFAULT_BRANCH}"]'],
-            script: [classpath: [], sandbox: false, script: '''
-                try {
-                    def proc = "git ls-remote --heads ${GIT_REPO}".execute()
-                    proc.waitFor()
-                    return proc.in.text.readLines().collect { it.split()[1].replace("refs/heads/", "") }
-                } catch (err) {
-                    return ["${DEFAULT_BRANCH}"]
-                }
-            ''']
-         ]
-        ]
-
+        // Branch selection is handled dynamically via Active Choices plugin in Jenkins UI
+        choice(name: 'BRANCH_NAME', choices: ['main'], description: 'Select branch to build (manual build only)')
         booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable if using private Git repo')
     }
 
