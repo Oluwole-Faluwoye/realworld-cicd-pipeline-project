@@ -7,14 +7,6 @@ def COLOR_MAP = [
 pipeline {
     agent any
 
-    // ---------------- Environment ----------------
-    environment {
-        WORKSPACE      = "${env.WORKSPACE}"
-        GIT_REPO       = credentials('GIT_REPO')       // Git repository URL
-        NEXUS_URL      = credentials('NEXUS_URL')      // Nexus server URL
-        SONAR_HOST_URL = credentials('SONAR_HOST_URL') // SonarQube server URL
-    }
-
     // ---------------- Tools ----------------
     tools {
         maven 'localMaven'
@@ -41,11 +33,11 @@ pipeline {
                                 def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
                                 try {
                                     sh """
-                                    cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                                    sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
-                                    sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                                    sed -i 's|\\\${nexus_private_ip}|$nexusUrl|g' $TMP_SETTINGS
-                                    mvn $mavenGoal --settings $TMP_SETTINGS
+                                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
+                                        sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                                        sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                                        sed -i 's|\\\${nexus_private_ip}|$nexusUrl|g' $TMP_SETTINGS
+                                        mvn $mavenGoal --settings $TMP_SETTINGS
                                     """
                                 } finally { sh "rm -f $TMP_SETTINGS" }
                             }
@@ -56,7 +48,7 @@ pipeline {
                     deployAnsible = { hosts ->
                         withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
                             sh """
-                            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$hosts workspace_path=$WORKSPACE"
+                                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$hosts workspace_path=$WORKSPACE"
                             """
                         }
                     }
@@ -67,39 +59,65 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine branch dynamically
-                    def branchToBuild = params.BRANCH_NAME?.trim() ?: (env.GIT_BRANCH ?: 'main')
+                    def branchToBuild = params.BRANCH_NAME?.trim() ?: env.BRANCH_NAME ?: 'main'
                     echo "Building branch: ${branchToBuild}"
 
                     withCredentials([usernamePassword(credentialsId: 'Git-Credential', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                        git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
+                        git branch: branchToBuild, url: 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git', credentialsId: 'Git-Credential'
                     }
                 }
             }
         }
 
         stage('Build') {
-            steps { script { runMaven('clean package', NEXUS_URL) } }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')]) {
+                        runMaven('clean package', NEXUS_URL)
+                    }
+                }
+            }
             post { success { archiveArtifacts artifacts: '**/*.war' } }
         }
 
         stage('Unit Test') {
-            steps { script { runMaven('test', NEXUS_URL) } }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')]) {
+                        runMaven('test', NEXUS_URL)
+                    }
+                }
+            }
         }
 
         stage('Integration Test') {
-            steps { script { runMaven('verify -DskipUnitTests', NEXUS_URL) } }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')]) {
+                        runMaven('verify -DskipUnitTests', NEXUS_URL)
+                    }
+                }
+            }
         }
 
         stage('Checkstyle Analysis') {
-            steps { script { runMaven('checkstyle:checkstyle', NEXUS_URL) } }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')]) {
+                        runMaven('checkstyle:checkstyle', NEXUS_URL)
+                    }
+                }
+            }
         }
 
         stage('SonarQube Inspection') {
             steps {
                 script {
-                    withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
-                        runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=$SONAR_TOKEN", NEXUS_URL)
+                    withCredentials([
+                        string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN'),
+                        string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')
+                    ]) {
+                        runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=https://sonar.example.com -Dsonar.login=$SONAR_TOKEN", NEXUS_URL)
                     }
                 }
             }
@@ -112,7 +130,10 @@ pipeline {
         stage('Nexus Artifact Upload') {
             steps {
                 script { 
-                    withCredentials([usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
+                        string(credentialsId: 'NEXUS_URL', variable: 'NEXUS_URL')
+                    ]) {
                         nexusArtifactUploader(
                             nexusVersion: 'nexus3',
                             protocol: 'http',
@@ -137,10 +158,14 @@ pipeline {
 
     post {
         always {
-            slackSend channel: '#af-cicd-pipeline-2',
-                      color: COLOR_MAP[currentBuild.currentResult],
-                      tokenCredentialId: 'Slack-Token',
-                      message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+            script {
+                withCredentials([string(credentialsId: 'Slack-Token', variable: 'SLACK_TOKEN')]) {
+                    slackSend channel: '#af-cicd-pipeline-2',
+                              color: COLOR_MAP[currentBuild.currentResult],
+                              token: SLACK_TOKEN,
+                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                }
+            }
         }
     }
 }
