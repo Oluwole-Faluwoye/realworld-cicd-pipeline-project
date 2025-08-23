@@ -1,31 +1,28 @@
 def COLOR_MAP = [
     'SUCCESS': 'good',
     'FAILURE': 'danger',
-    'UNSTABLE': 'danger'
+    'UNSTABLE': 'warning'
 ]
 
 pipeline {
     agent any
 
-    // ---------------- Environment ----------------
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
-        SONAR_HOST_URL = credentials('SONAR-Host-URL')  // SonarQube token stored as Secret Text
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
-        NEXUS_URL      = 'http://your-nexus-url:8081'  // Replace with your Nexus URL
+        NEXUS_URL      = 'http://172.31.14.247:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
+        SONAR_HOST_URL = 'http://172.31.6.142:9000'
     }
 
-    // ---------------- Tools ----------------
     tools {
         maven 'localMaven'
         jdk 'localJdk'
     }
 
-    // -------------- Parameters ---------------
     parameters {
         string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build. Leave empty to detect automatically')
-        booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable this if using private Git repo')
+        booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable if using private Git repo')
     }
 
     stages {
@@ -49,7 +46,9 @@ pipeline {
                                     sed -i 's|\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
                                     mvn $mavenGoal --settings $TMP_SETTINGS
                                     """
-                                } finally { sh "rm -f $TMP_SETTINGS" }
+                                } finally {
+                                    sh "rm -f $TMP_SETTINGS"
+                                }
                             }
                         }
                     }
@@ -74,9 +73,7 @@ pipeline {
                     echo "Building branch: ${branchToBuild}"
 
                     if (params.USE_GIT_CREDENTIAL) {
-                        withCredentials([usernamePassword(credentialsId: 'Git-Credential', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                            git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
-                        }
+                        git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
                     } else {
                         git branch: branchToBuild, url: GIT_REPO
                     }
@@ -103,7 +100,9 @@ pipeline {
 
         stage('SonarQube Inspection') {
             steps {
-                script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") }
+                script {
+                    runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}")
+                }
             }
         }
 
@@ -114,36 +113,36 @@ pipeline {
         stage('Nexus Artifact Upload') {
             steps {
                 script { 
-                    withCredentials([usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
-                        nexusArtifactUploader(
-                            nexusVersion: 'nexus3',
-                            protocol: 'http',
-                            nexusUrl: NEXUS_URL,
-                            groupId: 'webapp',
-                            version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
-                            repository: 'maven-project-releases',
-                            credentialsId: 'Nexus-Credential',
-                            artifacts: [[artifactId: 'webapp', classifier: '', file: "${WORKSPACE}/webapp/target/webapp.war", type: 'war']]
-                        )
-                    }
+                    nexusArtifactUploader(
+                        nexusVersion: 'nexus3',
+                        protocol: 'http',
+                        nexusUrl: NEXUS_URL,
+                        groupId: 'webapp',
+                        version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
+                        repository: 'maven-project-releases',
+                        credentialsId: 'Nexus-Credential',
+                        artifacts: [[artifactId: 'webapp', classifier: '', file: "${WORKSPACE}/webapp/target/webapp.war", type: 'war']]
+                    )
                 }
             }
         }
 
         stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
         stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval')            { steps { input('Proceed to Production?') } }
-        stage('Deploy to Production')   { steps { script { deployAnsible('prod') } } }
+        stage('QA Approval')           { steps { input('Proceed to Production?') } }
+        stage('Deploy to Production')  { steps { script { deployAnsible('prod') } } }
 
     }
 
     post {
         always {
-            withCredentials([string(credentialsId: 'Slack-Token', variable: 'SLACK_TOKEN')]) {
-                slackSend channel: SLACK_CHANNEL,
-                          color: COLOR_MAP[currentBuild.currentResult],
-                          tokenCredentialId: 'Slack-Token',
-                          message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+            script {
+                withCredentials([string(credentialsId: 'Slack-Token', variable: 'SLACK_TOKEN')]) {
+                    slackSend channel: env.SLACK_CHANNEL,
+                              color: COLOR_MAP[currentBuild.currentResult],
+                              tokenCredentialId: 'Slack-Token',
+                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                }
             }
         }
     }
