@@ -122,7 +122,7 @@ pipeline {
     }
 }
 
-// ---------------- Helper Function: Ansible ----------------
+// ---------------- Helper Function: Ansible ---------------
 def deployAnsible(hosts) {
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         sh """
