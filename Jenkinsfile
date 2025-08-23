@@ -13,6 +13,7 @@ pipeline {
         NEXUS_URL      = 'http://172.31.14.247:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.6.142:9000'
+        DEFAULT_BRANCH = 'main'
     }
 
     tools {
@@ -21,7 +22,27 @@ pipeline {
     }
 
     parameters {
-        string(name: 'BRANCH_NAME', defaultValue: '', description: 'Optional: Git branch to build. Leave empty to detect automatically')
+        // Dropdown of branches (Active Choices Plugin required)
+        [$class: 'CascadeChoiceParameter',
+         choiceType: 'PT_SINGLE_SELECT',
+         description: 'Select branch to build (manual build only)',
+         name: 'BRANCH_NAME',
+         randomName: 'choice-parameter-123456',
+         script: [
+            $class: 'GroovyScript',
+            fallbackScript: [classpath: [], sandbox: false, script: 'return ["${DEFAULT_BRANCH}"]'],
+            script: [classpath: [], sandbox: false, script: '''
+                try {
+                    def proc = "git ls-remote --heads ${GIT_REPO}".execute()
+                    proc.waitFor()
+                    return proc.in.text.readLines().collect { it.split()[1].replace("refs/heads/", "") }
+                } catch (err) {
+                    return ["${DEFAULT_BRANCH}"]
+                }
+            ''']
+         ]
+        ]
+
         booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable if using private Git repo')
     }
 
@@ -69,7 +90,11 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    def branchToBuild = params.BRANCH_NAME?.trim() ?: env.BRANCH_NAME ?: 'main'
+                    // Determine branch: parameter > webhook > default
+                    def branchToBuild = params.BRANCH_NAME?.trim()
+                    if (!branchToBuild) {
+                        branchToBuild = env.GIT_BRANCH?.replaceFirst(/^origin\//, '') ?: env.DEFAULT_BRANCH
+                    }
                     echo "Building branch: ${branchToBuild}"
 
                     if (params.USE_GIT_CREDENTIAL) {
