@@ -74,7 +74,7 @@ pipeline {
                         }
                     }
 
-                    // ---------------- Helper Function: Ansible ----------------
+                    // --------------- Helper Function: Ansible --------------
                     def deployAnsible = { envName ->
                         withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
                             sh """
