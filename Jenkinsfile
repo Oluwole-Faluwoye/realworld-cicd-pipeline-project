@@ -5,8 +5,8 @@ def COLOR_MAP = [
     'UNSTABLE': 'warning'
 ]
 
-// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token ----------
-def runMaven = { mavenGoal ->
+// ---------- Helper: Maven with Nexus creds + settings.xml templating ----------
+def runMaven = { mavenGoal, useSonarJava11=false ->
     withCredentials([
         usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
         string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')
@@ -14,17 +14,20 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                withEnv([
+                def envVars = [
                     "NEXUS_USER=$NEXUS_USER",
-                    "NEXUS_PASS=$NEXUS_PASS",
-                    "SONAR_TOKEN=$SONAR_TOKEN"
-                ]) {
+                    "NEXUS_PASS=$NEXUS_PASS"
+                ]
+                if (useSonarJava11) {
+                    envVars += ["JAVA_HOME=${tool 'jdk11'}", "PATH=${tool 'jdk11'}/bin:${env.PATH}"]
+                }
+                withEnv(envVars) {
                     sh """
                         cp \$MAVEN_SETTINGS $TMP_SETTINGS
                         sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                         sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
                         sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                        mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=\\\$SONAR_TOKEN
+                        mvn ${mavenGoal} --settings $TMP_SETTINGS ${useSonarJava11 ? "-Dsonar.login=\\\$SONAR_TOKEN" : ""}
                     """
                 }
             } finally {
@@ -67,7 +70,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17 for build
+        jdk   'localJdk' // Java 17
     }
 
     triggers {
@@ -76,9 +79,7 @@ pipeline {
 
     stages {
         stage('Pipeline Start') {
-            steps {
-                ansiColor('xterm') { echo ">>> Pipeline starting <<<" }
-            }
+            steps { ansiColor('xterm') { echo ">>> Pipeline starting <<<" } }
         }
 
         stage('Prepare') {
@@ -135,14 +136,12 @@ pipeline {
             post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } }
         }
 
-        // ---------- SonarQube with Java 11 ----------
         stage('SonarQube Inspection') {
             steps {
-                withEnv(["JAVA_HOME=${tool 'jdk11'}", "PATH=${tool 'jdk11'}/bin:${env.PATH}"]) {
-                    ansiColor('xterm') {
-                        script {
-                            runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
-                        }
+                ansiColor('xterm') {
+                    script {
+                        // Uses Java 11 only for Sonar
+                        runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}", true)
                     }
                 }
             }
