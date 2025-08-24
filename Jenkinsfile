@@ -14,13 +14,19 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                sh """
-                    cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                    sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
-                    sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                    sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                    mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=$SONAR_TOKEN
-                """
+                withEnv([
+                    "NEXUS_USER=$NEXUS_USER",
+                    "NEXUS_PASS=$NEXUS_PASS",
+                    "SONAR_TOKEN=$SONAR_TOKEN"
+                ]) {
+                    sh """
+                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
+                        sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
+                        mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=\\\$SONAR_TOKEN
+                    """
+                }
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -31,10 +37,12 @@ def runMaven = { mavenGoal ->
 // ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
-        sh """
-            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-              --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-        """
+        withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
+            sh """
+                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+            """
+        }
     }
 }
 
@@ -59,7 +67,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk'  // Java 17 for build
+        jdk   'localJdk' // Java 17 for build
     }
 
     triggers {
@@ -67,8 +75,10 @@ pipeline {
     }
 
     stages {
-        stage('Pipeline with Colors') {
-            steps { ansiColor('xterm') { script { echo ">>> Starting pipeline with ANSI color support <<<" } } }
+        stage('Pipeline Start') {
+            steps {
+                ansiColor('xterm') { echo ">>> Pipeline starting <<<" }
+            }
         }
 
         stage('Prepare') {
@@ -130,8 +140,8 @@ pipeline {
             steps {
                 withEnv(["JAVA_HOME=${tool 'jdk11'}", "PATH=${tool 'jdk11'}/bin:${env.PATH}"]) {
                     ansiColor('xterm') {
-                        script { 
-                            runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}") 
+                        script {
+                            runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
                         }
                     }
                 }
