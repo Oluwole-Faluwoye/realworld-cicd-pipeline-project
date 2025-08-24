@@ -67,7 +67,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17 for normal build
+        jdk   'localJdk' // Java 17 for most stages
     }
 
     triggers {
@@ -138,15 +138,19 @@ pipeline {
         // ---------- SonarQube with Java 11 ----------
         stage('SonarQube Inspection') {
             steps {
-                ansiColor('xterm') {
-                    script {
-                        // Dynamically get Java 11 path from Jenkins tools
-                        def java11Home = tool name: 'jdk11', type: 'jdk'
+                script {
+                    // Resolve the JDK11 path from Jenkins
+                    def jdk11Home = tool name: 'jdk11', type: 'jdk'
 
-                        withEnv([
-                            "JAVA_HOME=${java11Home}",
-                            "PATH=${java11Home}/bin:${env.PATH}"
-                        ]) {
+                    withEnv([
+                        "JAVA_HOME=${jdk11Home}",
+                        "PATH=${jdk11Home}/bin:${env.PATH}"
+                    ]) {
+                        ansiColor('xterm') {
+                            // Debug: confirm Java version
+                            sh '${JAVA_HOME}/bin/java -version'
+                            
+                            // Run SonarQube
                             runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
                         }
                     }
