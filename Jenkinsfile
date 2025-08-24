@@ -19,7 +19,10 @@ def runMaven = { mavenGoal ->
                 sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                 sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
                 sed -i 's|\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                mvn ${mavenGoal} --settings $TMP_SETTINGS
+
+                mvn ${mavenGoal} \
+                  --settings $TMP_SETTINGS \
+                  -Dsonar.login=$SONAR_TOKEN
                 """
             } finally {
                 sh "rm -f $TMP_SETTINGS"
@@ -44,6 +47,7 @@ pipeline {
     options {
         skipDefaultCheckout(true)
         timestamps()
+        ansiColor('xterm')     // ✅ enable colors globally
         buildDiscarder(logRotator(numToKeepStr: '25', artifactNumToKeepStr: '15'))
     }
 
@@ -63,102 +67,65 @@ pipeline {
     }
 
     triggers {
-        githubPush()  // GitHub webhook triggers build
+        githubPush()
     }
 
     stages {
-        stage('Pipeline with Colors') {
-            steps {
-                ansiColor('xterm') {
-                    script {
-                        echo ">>> Starting pipeline with ANSI color support <<<"
-                    }
-                }
-            }
-        }
 
         stage('Prepare') {
             steps {
-                ansiColor('xterm') {
-                    script {
-                        env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
-                        env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
-                        echo "Branch: ${env.BRANCH_NAME}"
-                        echo "Version tag: ${env.VERSION_TAG}"
-                    }
+                script {
+                    env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
+                    env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Version tag: ${env.VERSION_TAG}"
                 }
             }
         }
 
         stage('Checkout') {
             steps {
-                ansiColor('xterm') {
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "*/${env.BRANCH_NAME}"]],
-                        doGenerateSubmoduleConfigurations: false,
-                        extensions: [
-                            [$class: 'PruneStaleBranch'],
-                            [$class: 'CleanBeforeCheckout']
-                        ],
-                        userRemoteConfigs: [[
-                            url: env.GIT_REPO,
-                            credentialsId: 'Git-Credential',
-                            refspec: '+refs/heads/*:refs/remotes/origin/*'
-                        ]]
-                    ])
-                }
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${env.BRANCH_NAME}"]],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'PruneStaleBranch'],
+                        [$class: 'CleanBeforeCheckout']
+                    ],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: 'Git-Credential',
+                        refspec: '+refs/heads/*:refs/remotes/origin/*'
+                    ]]
+                ])
             }
         }
 
         stage('Build') {
-            steps {
-                ansiColor('xterm') {
-                    script { runMaven('clean package') }
-                }
-            }
-            post {
-                success { archiveArtifacts artifacts: '**/*.war', fingerprint: true }
-            }
+            steps { script { runMaven('clean package') } }
+            post { success { archiveArtifacts artifacts: '**/*.war', fingerprint: true } }
         }
 
         stage('Unit Test') {
-            steps {
-                ansiColor('xterm') {
-                    script { runMaven('test') }
-                }
-            }
-            post {
-                always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true }
-            }
+            steps { script { runMaven('test') } }
+            post { always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true } }
         }
 
         stage('Integration Test') {
-            steps {
-                ansiColor('xterm') {
-                    script { runMaven('verify -DskipUnitTests') }
-                }
-            }
-            post {
-                always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true }
-            }
+            steps { script { runMaven('verify -DskipUnitTests') } }
+            post { always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true } }
         }
 
         stage('Checkstyle Analysis') {
-            steps {
-                ansiColor('xterm') {
-                    script { runMaven('checkstyle:checkstyle') }
-                }
-            }
-            post {
-                always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true }
-            }
+            steps { script { runMaven('checkstyle:checkstyle') } }
+            post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } }
         }
 
         stage('SonarQube Inspection') {
             steps {
-                ansiColor('xterm') {
-                    script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") }
+                script {
+                    runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
                 }
             }
         }
@@ -173,43 +140,30 @@ pipeline {
 
         stage('Nexus Artifact Upload') {
             steps {
-                ansiColor('xterm') {
-                    script {
-                        nexusArtifactUploader(
-                            nexusVersion: 'nexus3',
-                            protocol: 'http',
-                            nexusUrl: NEXUS_URL,
-                            groupId: 'webapp',
-                            version: env.VERSION_TAG,
-                            repository: 'maven-project-releases',
-                            credentialsId: 'Nexus-Credential',
-                            artifacts: [[
-                                artifactId: 'webapp',
-                                classifier: '',
-                                file: "${WORKSPACE}/webapp/target/webapp.war",
-                                type: 'war'
-                            ]]
-                        )
-                    }
+                script {
+                    nexusArtifactUploader(
+                        nexusVersion: 'nexus3',
+                        protocol: 'http',
+                        nexusUrl: NEXUS_URL,
+                        groupId: 'webapp',
+                        version: env.VERSION_TAG,
+                        repository: 'maven-project-releases',
+                        credentialsId: 'Nexus-Credential',
+                        artifacts: [[
+                            artifactId: 'webapp',
+                            classifier: '',
+                            file: "${WORKSPACE}/webapp/target/webapp.war",
+                            type: 'war'
+                        ]]
+                    )
                 }
             }
         }
 
-        stage('Deploy to Development') {
-            steps { script { deployAnsible('dev') } }
-        }
-
-        stage('Deploy to Staging') {
-            steps { script { deployAnsible('stage') } }
-        }
-
-        stage('QA Approval') {
-            steps { input message: 'Proceed to Production?', ok: 'Deploy' }
-        }
-
-        stage('Deploy to Production') {
-            steps { script { deployAnsible('prod') } }
-        }
+        stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
+        stage('Deploy to Staging')    { steps { script { deployAnsible('stage') } } }
+        stage('QA Approval')          { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
+        stage('Deploy to Production') { steps { script { deployAnsible('prod') } } }
     }
 
     post {
