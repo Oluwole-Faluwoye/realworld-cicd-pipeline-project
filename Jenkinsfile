@@ -15,19 +15,13 @@ def runMaven = { mavenGoal ->
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
                 sh """
-                    # Copy template to tmp-settings
-                    cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
-
-                    # Safely replace variables
-                    sed -i 's|\\\${username}|${NEXUS_USER}|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\${password}|${NEXUS_PASS}|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\${nexus_private_ip}|${NEXUS_URL}|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\${SONAR_TOKEN}|${SONAR_TOKEN}|g' "$TMP_SETTINGS"
-
-                    # Run Maven with Java 17 + necessary add-opens for Sonar
-                    MAVEN_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED"
-                    mvn ${mavenGoal} --settings "$TMP_SETTINGS"
+                    cp \$MAVEN_SETTINGS $TMP_SETTINGS
+                    sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                    sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                    sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
+                    sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
                 """
+                sh "mvn ${mavenGoal} --settings $TMP_SETTINGS"
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -38,12 +32,10 @@ def runMaven = { mavenGoal ->
 // ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
-        withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
-            sh """
-                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-            """
-        }
+        sh """
+            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+              --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+        """
     }
 }
 
@@ -68,7 +60,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17
+        jdk   'localJdk' // Java 17 for build
     }
 
     triggers { githubPush() }
@@ -129,8 +121,20 @@ pipeline {
         stage('SonarQube Inspection') {
             steps {
                 script {
-                    echo "Running SonarQube analysis with Java 17 compatibility..."
-                    runMaven('sonar:sonar')
+                    env.JAVA_HOME = "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
+                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+                    echo "Using JAVA_HOME = ${env.JAVA_HOME}"
+                    sh 'java -version'
+
+                    // Add required --add-opens flags for Java 17
+                    withEnv([
+                        'MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
+                                     '--add-opens java.base/java.io=ALL-UNNAMED ' +
+                                     '--add-opens java.base/java.util=ALL-UNNAMED ' +
+                                     '--add-opens java.base/java.lang.reflect=ALL-UNNAMED'
+                    ]) {
+                        runMaven('sonar:sonar')
+                    }
                 }
             }
         }
