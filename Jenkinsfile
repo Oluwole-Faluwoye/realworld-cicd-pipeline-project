@@ -1,10 +1,11 @@
+// ---------- Visual status colors for Slack ----------
 def COLOR_MAP = [
     'SUCCESS': 'good',
     'FAILURE': 'danger',
     'UNSTABLE': 'warning'
 ]
 
-// ---------------------- Helper Functions (Global) ----------------------
+// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token ----------
 def runMaven = { mavenGoal ->
     withCredentials([
         usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
@@ -18,7 +19,7 @@ def runMaven = { mavenGoal ->
                 sed -i 's|\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                 sed -i 's|\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
                 sed -i 's|\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                mvn $mavenGoal --settings $TMP_SETTINGS
+                mvn ${mavenGoal} --settings $TMP_SETTINGS
                 """
             } finally {
                 sh "rm -f $TMP_SETTINGS"
@@ -27,18 +28,25 @@ def runMaven = { mavenGoal ->
     }
 }
 
+// ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         sh """
         ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-        --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$envName workspace_path=$WORKSPACE"
+          --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
         """
     }
 }
 
-// ---------------------- Pipeline ----------------------
 pipeline {
     agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '25', artifactNumToKeepStr: '15'))
+    }
 
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
@@ -46,85 +54,82 @@ pipeline {
         NEXUS_URL      = 'http://172.31.14.247:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.6.142:9000'
-        DEFAULT_BRANCH = 'main'
+        BRANCH_NAME    = 'main'  // default branch
+        VERSION_TAG    = ''
     }
 
     tools {
         maven 'localMaven'
-        jdk 'localJdk'
+        jdk   'localJdk'
     }
 
-    parameters {
-        // Active Choices Dropdown for Branches
-        [$class: 'CascadeChoiceParameter',
-         choiceType: 'PT_SINGLE_SELECT',
-         description: 'Select branch to build (manual build only)',
-         name: 'BRANCH_NAME',
-         randomName: 'choice-parameter-123456',
-         script: [
-            $class: 'GroovyScript',
-            fallbackScript: [classpath: [], sandbox: false, script: 'return ["${DEFAULT_BRANCH}"]'],
-            script: [classpath: [], sandbox: false, script: '''
-                try {
-                    def proc = "git ls-remote --heads ${GIT_REPO}".execute()
-                    proc.waitFor()
-                    return proc.in.text.readLines().collect { it.split()[1].replace("refs/heads/", "") }
-                } catch (err) {
-                    return ["${DEFAULT_BRANCH}"]
-                }
-            ''']
-         ]
-        ]
-
-        booleanParam(name: 'USE_GIT_CREDENTIAL', defaultValue: false, description: 'Enable if using private Git repo')
+    triggers {
+        githubPush()  // Automatically trigger build on GitHub push
     }
 
     stages {
+        stage('Prepare') {
+            steps {
+                script {
+                    env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Version tag: ${env.VERSION_TAG}"
+                }
+            }
+        }
 
         stage('Checkout') {
             steps {
                 script {
-                    def branchToBuild = params.BRANCH_NAME?.trim()
-                    if (!branchToBuild) {
-                        branchToBuild = env.GIT_BRANCH?.replaceFirst(/^origin\//, '') ?: env.DEFAULT_BRANCH
-                    }
-                    echo "Building branch: ${branchToBuild}"
-
-                    if (params.USE_GIT_CREDENTIAL) {
-                        git branch: branchToBuild, url: GIT_REPO, credentialsId: 'Git-Credential'
-                    } else {
-                        git branch: branchToBuild, url: GIT_REPO
-                    }
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${env.BRANCH_NAME}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [
+                            [$class: 'PruneStaleBranch'],
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption', depth: 0, noTags: false, shallow: false, reference: '']
+                        ],
+                        userRemoteConfigs: [[
+                            url: env.GIT_REPO,
+                            credentialsId: 'Git-Credential',
+                            refspec: '+refs/heads/*:refs/remotes/origin/*'
+                        ]]
+                    ])
                 }
             }
         }
 
         stage('Build') {
             steps { script { runMaven('clean package') } }
-            post { success { archiveArtifacts artifacts: '**/*.war' } }
+            post { success { archiveArtifacts artifacts: '**/*.war', fingerprint: true } }
         }
 
-        stage('Unit Test') { steps { script { runMaven('test') } } }
-        stage('Integration Test') { steps { script { runMaven('verify -DskipUnitTests') } } }
-        stage('Checkstyle Analysis') { steps { script { runMaven('checkstyle:checkstyle') } } }
-
-        stage('SonarQube Inspection') {
-            steps { script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") } }
+        stage('Unit Test') { steps { script { runMaven('test') } } 
+            post { always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true } } 
         }
 
-        stage('SonarQube GateKeeper') {
-            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } }
+        stage('Integration Test') { steps { script { runMaven('verify -DskipUnitTests') } } 
+            post { always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true } } 
         }
+
+        stage('Checkstyle Analysis') { steps { script { runMaven('checkstyle:checkstyle') } } 
+            post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } } 
+        }
+
+        stage('SonarQube Inspection') { steps { script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") } } }
+
+        stage('SonarQube GateKeeper') { steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } } }
 
         stage('Nexus Artifact Upload') {
             steps {
-                script { 
+                script {
                     nexusArtifactUploader(
                         nexusVersion: 'nexus3',
                         protocol: 'http',
                         nexusUrl: NEXUS_URL,
                         groupId: 'webapp',
-                        version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
+                        version: env.VERSION_TAG,
                         repository: 'maven-project-releases',
                         credentialsId: 'Nexus-Credential',
                         artifacts: [[artifactId: 'webapp', classifier: '', file: "${WORKSPACE}/webapp/target/webapp.war", type: 'war']]
@@ -135,19 +140,18 @@ pipeline {
 
         stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
         stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval')           { steps { input('Proceed to Production?') } }
+        stage('QA Approval')           { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
         stage('Deploy to Production')  { steps { script { deployAnsible('prod') } } }
-
     }
 
     post {
         always {
             script {
                 withCredentials([string(credentialsId: 'Slack-Token', variable: 'SLACK_TOKEN')]) {
-                    slackSend channel: env.SLACK_CHANNEL,
+                    slackSend channel: SLACK_CHANNEL,
                               color: COLOR_MAP[currentBuild.currentResult],
                               tokenCredentialId: 'Slack-Token',
-                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nVersion: ${env.VERSION_TAG}\nWorkspace: ${WORKSPACE}\nMore info: ${env.BUILD_URL}"
                 }
             }
         }
