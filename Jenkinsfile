@@ -5,7 +5,7 @@ def COLOR_MAP = [
     'UNSTABLE': 'warning'
 ]
 
-// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token --------
+// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token ----------
 def runMaven = { mavenGoal ->
     withCredentials([
         usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
@@ -14,21 +14,20 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                withEnv([
-                    "NEXUS_USER=$NEXUS_USER",
-                    "NEXUS_PASS=$NEXUS_PASS",
-                    "SONAR_TOKEN=$SONAR_TOKEN",
-                    "NEXUS_URL=$NEXUS_URL"
-                ]) {
-                    sh """
-                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                        sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
-                        mvn ${mavenGoal} --settings $TMP_SETTINGS
-                    """
-                }
+                sh """
+                    # Copy template to tmp-settings
+                    cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
+
+                    # Safely replace variables
+                    sed -i 's|\\\${username}|${NEXUS_USER}|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\${password}|${NEXUS_PASS}|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\${nexus_private_ip}|${NEXUS_URL}|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\${SONAR_TOKEN}|${SONAR_TOKEN}|g' "$TMP_SETTINGS"
+
+                    # Run Maven with Java 17 + necessary add-opens for Sonar
+                    MAVEN_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED"
+                    mvn ${mavenGoal} --settings "$TMP_SETTINGS"
+                """
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -69,7 +68,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17 for build
+        jdk   'localJdk' // Java 17
     }
 
     triggers { githubPush() }
@@ -130,11 +129,7 @@ pipeline {
         stage('SonarQube Inspection') {
             steps {
                 script {
-                    env.JAVA_HOME = "/usr/lib/jvm/java-11-amazon-corretto.x86_64"
-                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-                    echo "Using JAVA_HOME = ${env.JAVA_HOME}"
-                    sh 'java -version'
-
+                    echo "Running SonarQube analysis with Java 17 compatibility..."
                     runMaven('sonar:sonar')
                 }
             }
