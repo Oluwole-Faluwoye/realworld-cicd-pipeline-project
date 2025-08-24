@@ -5,7 +5,7 @@ def COLOR_MAP = [
     'UNSTABLE': 'warning'
 ]
 
-// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token ----------
+// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token --------
 def runMaven = { mavenGoal ->
     withCredentials([
         usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
@@ -25,7 +25,8 @@ def runMaven = { mavenGoal ->
                         sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
                         sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
                         sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                        mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=\\\$SONAR_TOKEN
+                        sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
+                        mvn ${mavenGoal} --settings $TMP_SETTINGS
                     """
                 }
             } finally {
@@ -134,15 +135,7 @@ pipeline {
                     echo "Using JAVA_HOME = ${env.JAVA_HOME}"
                     sh 'java -version'
 
-                    withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                            if [ -z "$SONAR_TOKEN" ]; then
-                                echo "ERROR: Sonar token is empty!"
-                                exit 1
-                            fi
-                        '''
-                        runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
-                    }
+                    runMaven('sonar:sonar')
                 }
             }
         }
