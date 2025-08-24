@@ -16,10 +16,10 @@ def runMaven = { mavenGoal ->
             try {
                 sh """
                     cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                    sed -i 's|\\\${username}|\\\$NEXUS_USER|g' $TMP_SETTINGS
-                    sed -i 's|\\\${password}|\\\$NEXUS_PASS|g' $TMP_SETTINGS
-                    sed -i 's|\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                    mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=\\\$SONAR_TOKEN
+                    sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                    sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                    sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
+                    mvn ${mavenGoal} --settings $TMP_SETTINGS -Dsonar.login=$SONAR_TOKEN
                 """
             } finally {
                 sh "rm -f $TMP_SETTINGS"
@@ -33,7 +33,7 @@ def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         sh """
             ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-              --extra-vars "ansible_user=\\\$USER_NAME ansible_password=\\\$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+              --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
         """
     }
 }
@@ -68,11 +68,7 @@ pipeline {
 
     stages {
         stage('Pipeline with Colors') {
-            steps {
-                ansiColor('xterm') {
-                    script { echo ">>> Starting pipeline with ANSI color support <<<" }
-                }
-            }
+            steps { ansiColor('xterm') { script { echo ">>> Starting pipeline with ANSI color support <<<" } } }
         }
 
         stage('Prepare') {
@@ -130,7 +126,11 @@ pipeline {
         }
 
         stage('SonarQube Inspection') {
-            steps { ansiColor('xterm') { script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}") } } }
+            steps {
+                ansiColor('xterm') {
+                    script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}") }
+                }
+            }
         }
 
         stage('SonarQube GateKeeper') {
