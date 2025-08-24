@@ -44,7 +44,6 @@ pipeline {
     options {
         skipDefaultCheckout(true)
         timestamps()
-        ansiColor('xterm')
         buildDiscarder(logRotator(numToKeepStr: '25', artifactNumToKeepStr: '15'))
     }
 
@@ -54,7 +53,7 @@ pipeline {
         NEXUS_URL      = 'http://172.31.14.247:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.6.142:9000'
-        BRANCH_NAME    = 'main'  // default branch
+        DEFAULT_BRANCH = 'main'
         VERSION_TAG    = ''
     }
 
@@ -64,31 +63,43 @@ pipeline {
     }
 
     triggers {
-        githubPush()  // Automatically trigger build on GitHub push
+        githubPush()  // GitHub webhook triggers build
     }
 
     stages {
+        stage('Pipeline with Colors') {
+            steps {
+                ansiColor('xterm') {
+                    script {
+                        echo ">>> Starting pipeline with ANSI color support <<<"
+                    }
+                }
+            }
+        }
+
         stage('Prepare') {
             steps {
-                script {
-                    env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
-                    echo "Branch: ${env.BRANCH_NAME}"
-                    echo "Version tag: ${env.VERSION_TAG}"
+                ansiColor('xterm') {
+                    script {
+                        env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
+                        env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
+                        echo "Branch: ${env.BRANCH_NAME}"
+                        echo "Version tag: ${env.VERSION_TAG}"
+                    }
                 }
             }
         }
 
         stage('Checkout') {
             steps {
-                script {
+                ansiColor('xterm') {
                     checkout([
                         $class: 'GitSCM',
                         branches: [[name: "*/${env.BRANCH_NAME}"]],
                         doGenerateSubmoduleConfigurations: false,
                         extensions: [
                             [$class: 'PruneStaleBranch'],
-                            [$class: 'CleanBeforeCheckout'],
-                            [$class: 'CloneOption', depth: 0, noTags: false, shallow: false, reference: '']
+                            [$class: 'CleanBeforeCheckout']
                         ],
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
@@ -101,47 +112,104 @@ pipeline {
         }
 
         stage('Build') {
-            steps { script { runMaven('clean package') } }
-            post { success { archiveArtifacts artifacts: '**/*.war', fingerprint: true } }
-        }
-
-        stage('Unit Test') { steps { script { runMaven('test') } } 
-            post { always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true } } 
-        }
-
-        stage('Integration Test') { steps { script { runMaven('verify -DskipUnitTests') } } 
-            post { always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true } } 
-        }
-
-        stage('Checkstyle Analysis') { steps { script { runMaven('checkstyle:checkstyle') } } 
-            post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } } 
-        }
-
-        stage('SonarQube Inspection') { steps { script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") } } }
-
-        stage('SonarQube GateKeeper') { steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } } }
-
-        stage('Nexus Artifact Upload') {
             steps {
-                script {
-                    nexusArtifactUploader(
-                        nexusVersion: 'nexus3',
-                        protocol: 'http',
-                        nexusUrl: NEXUS_URL,
-                        groupId: 'webapp',
-                        version: env.VERSION_TAG,
-                        repository: 'maven-project-releases',
-                        credentialsId: 'Nexus-Credential',
-                        artifacts: [[artifactId: 'webapp', classifier: '', file: "${WORKSPACE}/webapp/target/webapp.war", type: 'war']]
-                    )
+                ansiColor('xterm') {
+                    script { runMaven('clean package') }
+                }
+            }
+            post {
+                success { archiveArtifacts artifacts: '**/*.war', fingerprint: true }
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                ansiColor('xterm') {
+                    script { runMaven('test') }
+                }
+            }
+            post {
+                always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true }
+            }
+        }
+
+        stage('Integration Test') {
+            steps {
+                ansiColor('xterm') {
+                    script { runMaven('verify -DskipUnitTests') }
+                }
+            }
+            post {
+                always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true }
+            }
+        }
+
+        stage('Checkstyle Analysis') {
+            steps {
+                ansiColor('xterm') {
+                    script { runMaven('checkstyle:checkstyle') }
+                }
+            }
+            post {
+                always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true }
+            }
+        }
+
+        stage('SonarQube Inspection') {
+            steps {
+                ansiColor('xterm') {
+                    script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}") }
                 }
             }
         }
 
-        stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
-        stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval')           { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
-        stage('Deploy to Production')  { steps { script { deployAnsible('prod') } } }
+        stage('SonarQube GateKeeper') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Nexus Artifact Upload') {
+            steps {
+                ansiColor('xterm') {
+                    script {
+                        nexusArtifactUploader(
+                            nexusVersion: 'nexus3',
+                            protocol: 'http',
+                            nexusUrl: NEXUS_URL,
+                            groupId: 'webapp',
+                            version: env.VERSION_TAG,
+                            repository: 'maven-project-releases',
+                            credentialsId: 'Nexus-Credential',
+                            artifacts: [[
+                                artifactId: 'webapp',
+                                classifier: '',
+                                file: "${WORKSPACE}/webapp/target/webapp.war",
+                                type: 'war'
+                            ]]
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Development') {
+            steps { script { deployAnsible('dev') } }
+        }
+
+        stage('Deploy to Staging') {
+            steps { script { deployAnsible('stage') } }
+        }
+
+        stage('QA Approval') {
+            steps { input message: 'Proceed to Production?', ok: 'Deploy' }
+        }
+
+        stage('Deploy to Production') {
+            steps { script { deployAnsible('prod') } }
+        }
     }
 
     post {
