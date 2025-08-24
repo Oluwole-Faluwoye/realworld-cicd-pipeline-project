@@ -59,7 +59,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk'
+        jdk   'localJdk'  // Java 17 for build
     }
 
     triggers {
@@ -125,10 +125,15 @@ pipeline {
             post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } }
         }
 
+        // ---------- SonarQube with Java 11 ----------
         stage('SonarQube Inspection') {
             steps {
-                ansiColor('xterm') {
-                    script { runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}") }
+                withEnv(["JAVA_HOME=${tool 'jdk11'}", "PATH=${tool 'jdk11'}/bin:${env.PATH}"]) {
+                    ansiColor('xterm') {
+                        script { 
+                            runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}") 
+                        }
+                    }
                 }
             }
         }
