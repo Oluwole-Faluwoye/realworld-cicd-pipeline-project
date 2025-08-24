@@ -5,7 +5,7 @@ def COLOR_MAP = [
     'UNSTABLE': 'warning'
 ]
 
-// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token ----------
+// ---------- Helper: Maven with Nexus creds + settings.xml templating + Sonar token --------
 def runMaven = { mavenGoal ->
     withCredentials([
         usernamePassword(credentialsId: 'Nexus-Credential', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS'),
@@ -58,7 +58,7 @@ pipeline {
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
-        NEXUS_URL      = 'http://172.31.14.247:8081'
+        NEXUS_URL      = 'http://172.31.2.149:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.8.156:9000'
         DEFAULT_BRANCH = 'main'
