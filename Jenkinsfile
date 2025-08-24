@@ -67,7 +67,7 @@ pipeline {
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17 for most stages
+        jdk   'localJdk' // Java 17 for build
     }
 
     triggers {
@@ -76,9 +76,7 @@ pipeline {
 
     stages {
         stage('Pipeline Start') {
-            steps {
-                ansiColor('xterm') { echo ">>> Pipeline starting <<<" }
-            }
+            steps { ansiColor('xterm') { echo ">>> Pipeline starting <<<" } }
         }
 
         stage('Prepare') {
@@ -115,42 +113,31 @@ pipeline {
             }
         }
 
-        stage('Build') {
-            steps { ansiColor('xterm') { script { runMaven('clean package') } } }
+        stage('Build') { steps { ansiColor('xterm') { script { runMaven('clean package') } } }
             post { success { archiveArtifacts artifacts: '**/*.war', fingerprint: true } }
         }
 
-        stage('Unit Test') {
-            steps { ansiColor('xterm') { script { runMaven('test') } } }
+        stage('Unit Test') { steps { ansiColor('xterm') { script { runMaven('test') } } }
             post { always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true } }
         }
 
-        stage('Integration Test') {
-            steps { ansiColor('xterm') { script { runMaven('verify -DskipUnitTests') } } }
+        stage('Integration Test') { steps { ansiColor('xterm') { script { runMaven('verify -DskipUnitTests') } } }
             post { always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true } }
         }
 
-        stage('Checkstyle Analysis') {
-            steps { ansiColor('xterm') { script { runMaven('checkstyle:checkstyle') } } }
+        stage('Checkstyle Analysis') { steps { ansiColor('xterm') { script { runMaven('checkstyle:checkstyle') } } }
             post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } }
         }
 
         // ---------- SonarQube with Java 11 ----------
         stage('SonarQube Inspection') {
             steps {
-                script {
-                    // Resolve the JDK11 path from Jenkins
-                    def jdk11Home = tool name: 'jdk11', type: 'jdk'
-
-                    withEnv([
-                        "JAVA_HOME=${jdk11Home}",
-                        "PATH=${jdk11Home}/bin:${env.PATH}"
-                    ]) {
-                        ansiColor('xterm') {
-                            // Debug: confirm Java version
-                            sh '${JAVA_HOME}/bin/java -version'
-                            
-                            // Run SonarQube
+                withEnv([
+                    "JAVA_HOME=/usr/lib/jvm/java-11-amazon-corretto.x86_64",
+                    "PATH=/usr/lib/jvm/java-11-amazon-corretto.x86_64/bin:${env.PATH}"
+                ]) {
+                    ansiColor('xterm') {
+                        script {
                             runMaven("sonar:sonar -Dsonar.projectKey=Java-WebApp-Project -Dsonar.host.url=${SONAR_HOST_URL}")
                         }
                     }
