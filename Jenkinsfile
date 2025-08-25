@@ -135,7 +135,6 @@ pipeline {
                     echo "Using JAVA_HOME = ${env.JAVA_HOME}"
                     sh 'java -version'
 
-                    // Java 17 opens for SonarQube
                     withEnv([
                         'MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
                                      '--add-opens java.base/java.io=ALL-UNNAMED ' +
@@ -162,6 +161,15 @@ pipeline {
             steps {
                 ansiColor('xterm') {
                     script {
+                        def warFile = "${WORKSPACE}/webapp/target/webapp.war"
+
+                        if (!fileExists(warFile)) {
+                            error "WAR file not found at: ${warFile}. Make sure the build stage ran successfully."
+                        }
+
+                        echo "Uploading artifact with version: ${env.VERSION_TAG}"
+                        echo "WAR file path: ${warFile}"
+
                         nexusArtifactUploader(
                             nexusVersion: 'nexus3',
                             protocol: 'http',
@@ -173,7 +181,7 @@ pipeline {
                             artifacts: [[
                                 artifactId: 'webapp',
                                 classifier: '',
-                                file: "${WORKSPACE}/webapp/target/webapp.war",
+                                file: warFile,
                                 type: 'war'
                             ]]
                         )
