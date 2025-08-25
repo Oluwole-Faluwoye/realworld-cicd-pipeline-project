@@ -60,7 +60,7 @@ pipeline {
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
-        NEXUS_URL      = 'http://172.31.2.149:8081'
+        NEXUS_URL      = '172.31.2.149:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.8.156:9000'
         DEFAULT_BRANCH = 'main'
