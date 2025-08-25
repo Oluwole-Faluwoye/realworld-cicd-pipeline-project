@@ -16,12 +16,10 @@ def runMaven = { mavenGoal ->
             try {
                 sh """#!/bin/bash
                     cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
-                    # Replace placeholders with actual values
                     sed -i "s|\\\${NEXUS_USER}|$NEXUS_USER|g" "$TMP_SETTINGS"
                     sed -i "s|\\\${NEXUS_PASS}|$NEXUS_PASS|g" "$TMP_SETTINGS"
                     sed -i "s|\\\${NEXUS_URL}|$NEXUS_URL|g" "$TMP_SETTINGS"
                     sed -i "s|\\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
-                    
                     mvn ${mavenGoal} --settings "$TMP_SETTINGS"
                 """
             } finally {
@@ -31,16 +29,21 @@ def runMaven = { mavenGoal ->
     }
 }
 
-
-// ---------- Helper: Ansible deploy using Jenkins credential ----------
+// ---------- Helper: Ansible deploy using Jenkins credentials (secure & AWS-ready) ----------
 def deployAnsible = { envName ->
-    withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
-        withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
-            sh """#!/bin/bash
-                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \\
-                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-            """
-        }
+    withCredentials([
+        usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'ANSIBLE_USER', passwordVariable: 'ANSIBLE_PASS'),
+        string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+        string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
+    ]) {
+        sh(script: """
+            #!/bin/bash
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+
+            ansible-playbook -i "${WORKSPACE}/ansible-config/aws_ec2.yaml" "${WORKSPACE}/deploy.yaml" \\
+              --extra-vars "ansible_user=$ANSIBLE_USER ansible_password=$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+        """, returnStatus: false)
     }
 }
 
@@ -162,10 +165,20 @@ pipeline {
             }
         }
 
-        stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
-        stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval')           { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
-        stage('Deploy to Production')  { steps { script { deployAnsible('prod') } } }
+        // ---------- Ansible Deploy Stages ----------
+        stage('Deploy Environments') {
+            steps {
+                script {
+                    def deployEnvironments = ['dev', 'stage', 'prod']
+                    deployEnvironments.each { envName ->
+                        if (envName == 'prod') {
+                            input message: 'Proceed to Production?', ok: 'Deploy'
+                        }
+                        deployAnsible(envName)
+                    }
+                }
+            }
+        }
     }
 
     post {

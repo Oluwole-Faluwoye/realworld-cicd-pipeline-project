@@ -1,17 +1,47 @@
-- name: Ansible Copy Local to Remote
-  hosts: "{{hosts}}"
+---
+- name: Deploy webapp to EC2 instances
+  hosts: "{{ hosts }}"
+  become: true
   vars:
     src_path: "{{ workspace_path }}/webapp/target/webapp.war"
-    dest_path: "/var/lib/tomcat/webapps"
-    config_file_src_path: "{{ hosts }}-config.yaml"
-    config_file_dest_path: "/home"
+    dest_path: "/opt/tomcat9/webapps/webapp.war"
+    tomcat_service: "tomcat"
+
   tasks:
-    - name: copying file with playbook
-      become: true
+    - name: Ensure destination directory exists
+      file:
+        path: "/opt/tomcat9/webapps"
+        state: directory
+        owner: ansibleadmin
+        group: ansibleadmin
+        mode: '0755'
+
+    - name: Copy WAR file to Tomcat
       copy:
         src: "{{ src_path }}"
         dest: "{{ dest_path }}"
         owner: ansibleadmin
         group: ansibleadmin
-        mode: 0644
+        mode: '0644'
 
+    - name: Restart Tomcat to deploy new WAR
+      systemd:
+        name: "{{ tomcat_service }}"
+        state: restarted
+        enabled: true
+
+    - name: Wait for Tomcat to start
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: 8080
+        delay: 10
+        timeout: 60
+
+    - name: Verify deployment
+      uri:
+        url: "http://{{ inventory_hostname }}:8080/webapp/"
+        status_code: 200
+      register: result
+      retries: 5
+      delay: 5
+      until: result.status == 200
