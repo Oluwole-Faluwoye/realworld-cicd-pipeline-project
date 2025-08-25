@@ -64,12 +64,11 @@ pipeline {
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.8.156:9000'
         DEFAULT_BRANCH = 'main'
-        VERSION_TAG    = ''
     }
 
     tools {
         maven 'localMaven'
-        jdk   'localJdk' // Java 17 for build
+        jdk   'localJdk'
     }
 
     triggers { githubPush() }
@@ -85,9 +84,7 @@ pipeline {
                 ansiColor('xterm') {
                     script {
                         env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
-                        env.VERSION_TAG = "${env.BUILD_NUMBER}-${new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))}"
                         echo "Branch: ${env.BRANCH_NAME}"
-                        echo "Version tag: ${env.VERSION_TAG}"
                     }
                 }
             }
@@ -157,34 +154,15 @@ pipeline {
             }
         }
 
+        // ---------- FIXED Nexus Deploy Stage ----------
         stage('Nexus Artifact Upload') {
             steps {
                 ansiColor('xterm') {
                     script {
-                        def warFile = "${WORKSPACE}/webapp/target/webapp.war"
-
-                        if (!fileExists(warFile)) {
-                            error "WAR file not found at: ${warFile}. Make sure the build stage ran successfully."
+                        echo "Deploying webapp to Nexus via Maven..."
+                        dir('webapp') {
+                            runMaven('deploy')
                         }
-
-                        echo "Uploading artifact with version: ${env.VERSION_TAG}"
-                        echo "WAR file path: ${warFile}"
-
-                        nexusArtifactUploader(
-                            nexusVersion: 'nexus3',
-                            protocol: 'http',
-                            nexusUrl: NEXUS_URL,
-                            groupId: 'webapp',
-                            version: env.VERSION_TAG,
-                            repository: 'maven-project-releases',
-                            credentialsId: 'Nexus-Credential',
-                            artifacts: [[
-                                artifactId: 'webapp',
-                                classifier: '',
-                                file: warFile,
-                                type: 'war'
-                            ]]
-                        )
                     }
                 }
             }
@@ -203,7 +181,7 @@ pipeline {
                     slackSend channel: SLACK_CHANNEL,
                               color: COLOR_MAP[currentBuild.currentResult],
                               tokenCredentialId: 'Slack-Token',
-                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nVersion: ${env.VERSION_TAG}\nWorkspace: ${WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nWorkspace: ${WORKSPACE}\nMore info: ${env.BUILD_URL}"
                 }
             }
         }
