@@ -12,16 +12,20 @@ def runMaven = { mavenGoal ->
         string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')
     ]) {
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
-            sh """
-                TMP_SETTINGS="\$WORKSPACE/tmp-settings.xml"
-                cp "\$MAVEN_SETTINGS" "\$TMP_SETTINGS"
-                sed -i 's|\\\\\${username}|$NEXUS_USER|g' "\$TMP_SETTINGS"
-                sed -i 's|\\\\\${password}|$NEXUS_PASS|g' "\$TMP_SETTINGS"
-                sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' "\$TMP_SETTINGS"
-                sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' "\$TMP_SETTINGS"
-                mvn ${mavenGoal} --settings "\$TMP_SETTINGS"
-                rm -f "\$TMP_SETTINGS"
-            """
+            def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
+            try {
+                sh '''
+                    cp "$MAVEN_SETTINGS" "$TMP_SETTINGS"
+                    sed -i "s|\\${username}|$NEXUS_USER|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${password}|$NEXUS_PASS|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${nexus_private_ip}|$NEXUS_URL|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
+                    mvn ''' + mavenGoal + ''' --settings "$TMP_SETTINGS"
+                    rm -f "$TMP_SETTINGS"
+                '''
+            } finally {
+                sh "rm -f $TMP_SETTINGS"
+            }
         }
     }
 }
@@ -29,10 +33,12 @@ def runMaven = { mavenGoal ->
 // ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
-        sh """
-            ansible-playbook -i \${WORKSPACE}/ansible-config/aws_ec2.yaml \${WORKSPACE}/deploy.yaml \
-                --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=\${WORKSPACE}"
-        """
+        withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
+            sh """
+                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+            """
+        }
     }
 }
 
@@ -46,6 +52,7 @@ pipeline {
     }
 
     environment {
+        WORKSPACE      = "${env.WORKSPACE}"
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
         NEXUS_URL      = '172.31.2.149:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
@@ -68,42 +75,46 @@ pipeline {
 
         stage('Prepare') {
             steps {
-                script {
-                    env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
-                    echo "Branch: ${env.BRANCH_NAME}"
+                ansiColor('xterm') {
+                    script {
+                        env.BRANCH_NAME = env.BRANCH_NAME ?: env.DEFAULT_BRANCH
+                        echo "Branch: ${env.BRANCH_NAME}"
+                    }
                 }
             }
         }
 
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: "*/${env.BRANCH_NAME}"]],
-                    doGenerateSubmoduleConfigurations: false,
-                    extensions: [[$class: 'PruneStaleBranch'], [$class: 'CleanBeforeCheckout']],
-                    userRemoteConfigs: [[url: env.GIT_REPO, credentialsId: 'Git-Credential', refspec: '+refs/heads/*:refs/remotes/origin/*']]
-                ])
+                ansiColor('xterm') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${env.BRANCH_NAME}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [[$class: 'PruneStaleBranch'], [$class: 'CleanBeforeCheckout']],
+                        userRemoteConfigs: [[url: env.GIT_REPO, credentialsId: 'Git-Credential', refspec: '+refs/heads/*:refs/remotes/origin/*']]
+                    ])
+                }
             }
         }
 
         stage('Build') {
-            steps { script { runMaven('clean package') } }
+            steps { ansiColor('xterm') { script { runMaven('clean package') } } }
             post { success { archiveArtifacts artifacts: '**/*.war', fingerprint: true } }
         }
 
         stage('Unit Test') {
-            steps { script { runMaven('test') } }
+            steps { ansiColor('xterm') { script { runMaven('test') } } }
             post { always { junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true } }
         }
 
         stage('Integration Test') {
-            steps { script { runMaven('verify -DskipUnitTests') } }
+            steps { ansiColor('xterm') { script { runMaven('verify -DskipUnitTests') } } }
             post { always { junit testResults: '**/target/failsafe-reports/*.xml', allowEmptyResults: true } }
         }
 
         stage('Checkstyle Analysis') {
-            steps { script { runMaven('checkstyle:checkstyle') } }
+            steps { ansiColor('xterm') { script { runMaven('checkstyle:checkstyle') } } }
             post { always { archiveArtifacts artifacts: '**/target/checkstyle-result.xml', allowEmptyArchive: true } }
         }
 
@@ -130,14 +141,22 @@ pipeline {
         }
 
         stage('SonarQube GateKeeper') {
-            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } }
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
         }
 
         stage('Nexus Artifact Upload') {
             steps {
-                script {
-                    echo "Deploying webapp to Nexus via Maven..."
-                    dir('webapp') { runMaven('deploy') }
+                ansiColor('xterm') {
+                    script {
+                        echo "Deploying webapp to Nexus via Maven..."
+                        dir('webapp') {
+                            runMaven('deploy')
+                        }
+                    }
                 }
             }
         }
@@ -155,7 +174,7 @@ pipeline {
                     slackSend channel: SLACK_CHANNEL,
                               color: COLOR_MAP[currentBuild.currentResult],
                               tokenCredentialId: 'Slack-Token',
-                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nWorkspace: ${env.WORKSPACE}\nMore info: ${env.BUILD_URL}"
+                              message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME}' Build #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nWorkspace: ${WORKSPACE}\nMore info: ${env.BUILD_URL}"
                 }
             }
         }
