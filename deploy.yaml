@@ -1,32 +1,31 @@
 ---
 - name: Deploy webapp to EC2 instances
   hosts: "{{ hosts }}"
-  become: true
+  become: false
   vars:
     src_path: "{{ workspace_path }}/webapp/target/webapp.war"
     dest_path: "/opt/tomcat9/webapps/webapp.war"
-    tomcat_service: "tomcat"
 
   tasks:
-    - name: Ensure destination directory exists
+    - name: Ensure Tomcat webapps directory exists
       file:
         path: "/opt/tomcat9/webapps"
         state: directory
-        owner: ansibleadmin
+        owner: ec2-user
         group: ansibleadmin
-        mode: '0755'
+        mode: '0775'
 
     - name: Copy WAR file to Tomcat
       copy:
         src: "{{ src_path }}"
         dest: "{{ dest_path }}"
-        owner: ansibleadmin
+        owner: ec2-user
         group: ansibleadmin
-        mode: '0644'
+        mode: '0664'
 
     - name: Restart Tomcat to deploy new WAR
       systemd:
-        name: "{{ tomcat_service }}"
+        name: tomcat
         state: restarted
         enabled: true
 
