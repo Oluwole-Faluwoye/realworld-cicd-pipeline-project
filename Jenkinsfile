@@ -74,14 +74,15 @@ pipeline {
                     ]) {
                         withSonarQubeEnv('SonarQube') {
                             withCredentials([string(credentialsId: 'SonarQube-Token', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                            mvn sonar:sonar \
-                            -Dsonar.projectKey=Java-WebApp-Project \
-                            -Dsonar.host.url=http://172.31.6.182:9000 \
-                            -Dsonar.login=${SONAR_TOKEN}
-                            """
-                        }
-                    }
+                                sh """
+                                mvn sonar:sonar \
+                                -Dsonar.projectKey=Java-WebApp-Project \
+                                -Dsonar.host.url=http://172.31.6.182:9000 \
+                                -Dsonar.login=${SONAR_TOKEN}
+                                """
+                            } // closes withCredentials
+                        } // closes withSonarQubeEnv
+                    } // closes withEnv
                 }
             }
         }
