@@ -154,29 +154,19 @@ pipeline {
             }
         }
 
-stage('Nexus Artifact Upload') {
-    steps {
-        ansiColor('xterm') {
-            script {
-                echo "Deploying webapp WAR to Nexus..."
-                dir('webapp') {
-                    sh """
-                        mvn deploy:deploy-file \
-                            -DgroupId=com.example.maven-project \
-                            -DartifactId=webapp \
-                            -Dversion=1.0-SNAPSHOT \
-                            -Dpackaging=war \
-                            -Dfile=target/webapp.war \
-                            -DrepositoryId=nexus \
-                            -Durl=http://172.31.2.149:8081/repository/maven-project-releases/ \
-                            --settings $TMP_SETTINGS
-                    """
+        // ---------- FIXED Nexus Deploy Stage ----------
+        stage('Nexus Artifact Upload') {
+            steps {
+                ansiColor('xterm') {
+                    script {
+                        echo "Deploying webapp to Nexus via Maven..."
+                        dir('webapp') {
+                            runMaven('deploy')
+                        }
+                    }
                 }
             }
         }
-    }
-}
-
 
         stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
         stage('Deploy to Staging') { steps { script { deployAnsible('stage') } } }
