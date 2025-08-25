@@ -14,21 +14,17 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                withEnv([
-                    "NEXUS_USER=$NEXUS_USER",
-                    "NEXUS_PASS=$NEXUS_PASS",
-                    "SONAR_TOKEN=$SONAR_TOKEN",
-                    "NEXUS_URL=$NEXUS_URL"
-                ]) {
-                    sh """
-                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                        sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                        sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
-                        mvn ${mavenGoal} --settings $TMP_SETTINGS
-                    """
-                }
+                sh '''
+                    cp "$MAVEN_SETTINGS" "$TMP_SETTINGS"
+
+                    # Replace placeholders safely
+                    sed -i "s|\\${username}|$NEXUS_USER|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${password}|$NEXUS_PASS|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${nexus_private_ip}|$NEXUS_URL|g" "$TMP_SETTINGS"
+                    sed -i "s|\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
+
+                    mvn ''' + "${mavenGoal}" + ''' --settings "$TMP_SETTINGS"
+                '''
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -40,10 +36,10 @@ def runMaven = { mavenGoal ->
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
-            sh """
+            sh '''
                 ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-            """
+                  --extra-vars "ansible_user=$ANSIBLE_USER ansible_password=$ANSIBLE_PASS hosts=tag_Environment_''' + "${envName}" + ''' workspace_path=$WORKSPACE"
+            '''
         }
     }
 }
@@ -132,12 +128,10 @@ pipeline {
                     echo "Using JAVA_HOME = ${env.JAVA_HOME}"
                     sh 'java -version'
 
-                    withEnv([
-                        'MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
-                                     '--add-opens java.base/java.io=ALL-UNNAMED ' +
-                                     '--add-opens java.base/java.util=ALL-UNNAMED ' +
-                                     '--add-opens java.base/java.lang.reflect=ALL-UNNAMED'
-                    ]) {
+                    withEnv(['MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
+                             '--add-opens java.base/java.io=ALL-UNNAMED ' +
+                             '--add-opens java.base/java.util=ALL-UNNAMED ' +
+                             '--add-opens java.base/java.lang.reflect=ALL-UNNAMED']) {
                         withSonarQubeEnv('SonarQube') {
                             runMaven('sonar:sonar')
                         }
@@ -154,15 +148,12 @@ pipeline {
             }
         }
 
-        // ---------- FIXED Nexus Deploy Stage ----------
         stage('Nexus Artifact Upload') {
             steps {
                 ansiColor('xterm') {
                     script {
                         echo "Deploying webapp to Nexus via Maven..."
-                        dir('webapp') {
-                            runMaven('deploy')
-                        }
+                        dir('webapp') { runMaven('deploy') }
                     }
                 }
             }
