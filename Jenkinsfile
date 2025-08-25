@@ -16,10 +16,12 @@ def runMaven = { mavenGoal ->
             try {
                 sh """#!/bin/bash
                     cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\\${username}|$NEXUS_USER|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\\${password}|$NEXUS_PASS|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\\${nexus_private_ip}|$NEXUS_URL|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' "$TMP_SETTINGS"
+                    # Replace placeholders with actual values
+                    sed -i "s|\\\${NEXUS_USER}|$NEXUS_USER|g" "$TMP_SETTINGS"
+                    sed -i "s|\\\${NEXUS_PASS}|$NEXUS_PASS|g" "$TMP_SETTINGS"
+                    sed -i "s|\\\${NEXUS_URL}|$NEXUS_URL|g" "$TMP_SETTINGS"
+                    sed -i "s|\\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
+                    
                     mvn ${mavenGoal} --settings "$TMP_SETTINGS"
                 """
             } finally {
@@ -28,6 +30,7 @@ def runMaven = { mavenGoal ->
         }
     }
 }
+
 
 // ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
