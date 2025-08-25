@@ -60,7 +60,7 @@ pipeline {
     environment {
         WORKSPACE      = "${env.WORKSPACE}"
         GIT_REPO       = 'https://github.com/Oluwole-Faluwoye/realworld-cicd-pipeline-project.git'
-        NEXUS_URL      = 'ht172.31.2.149:8081'
+        NEXUS_URL      = '172.31.2.149:8081'
         SLACK_CHANNEL  = '#af-cicd-pipeline-2'
         SONAR_HOST_URL = 'http://172.31.8.156:9000'
         DEFAULT_BRANCH = 'main'
@@ -135,7 +135,6 @@ pipeline {
                     echo "Using JAVA_HOME = ${env.JAVA_HOME}"
                     sh 'java -version'
 
-                    // Java 17 opens for SonarQube
                     withEnv([
                         'MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
                                      '--add-opens java.base/java.io=ALL-UNNAMED ' +
@@ -162,6 +161,15 @@ pipeline {
             steps {
                 ansiColor('xterm') {
                     script {
+                        def warFile = "${WORKSPACE}/webapp/target/webapp.war"
+
+                        if (!fileExists(warFile)) {
+                            error "WAR file not found at: ${warFile}. Make sure the build stage ran successfully."
+                        }
+
+                        echo "Uploading artifact with version: ${env.VERSION_TAG}"
+                        echo "WAR file path: ${warFile}"
+
                         nexusArtifactUploader(
                             nexusVersion: 'nexus3',
                             protocol: 'http',
@@ -173,7 +181,7 @@ pipeline {
                             artifacts: [[
                                 artifactId: 'webapp',
                                 classifier: '',
-                                file: "${WORKSPACE}/webapp/target/webapp.war",
+                                file: warFile,
                                 type: 'war'
                             ]]
                         )
