@@ -14,15 +14,14 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                sh '''
-                    cp "$MAVEN_SETTINGS" "$TMP_SETTINGS"
-                    sed -i "s|\\${username}|$NEXUS_USER|g" "$TMP_SETTINGS"
-                    sed -i "s|\\${password}|$NEXUS_PASS|g" "$TMP_SETTINGS"
-                    sed -i "s|\\${nexus_private_ip}|$NEXUS_URL|g" "$TMP_SETTINGS"
-                    sed -i "s|\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
-                    mvn ''' + mavenGoal + ''' --settings "$TMP_SETTINGS"
-                    rm -f "$TMP_SETTINGS"
-                '''
+                sh """
+                    cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\$\\{username\\}|$NEXUS_USER|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\$\\{password\\}|$NEXUS_PASS|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\$\\{nexus_private_ip\\}|$NEXUS_URL|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\$\\{SONAR_TOKEN\\}|$SONAR_TOKEN|g' "$TMP_SETTINGS"
+                    mvn ${mavenGoal} --settings "$TMP_SETTINGS"
+                """
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -68,7 +67,6 @@ pipeline {
     triggers { githubPush() }
 
     stages {
-
         stage('Pipeline Start') {
             steps { ansiColor('xterm') { echo ">>> Pipeline starting <<<" } }
         }
