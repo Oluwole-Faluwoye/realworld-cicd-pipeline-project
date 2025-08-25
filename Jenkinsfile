@@ -14,12 +14,12 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                sh """
+                sh """#!/bin/bash
                     cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\$\\{username\\}|$NEXUS_USER|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\$\\{password\\}|$NEXUS_PASS|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\$\\{nexus_private_ip\\}|$NEXUS_URL|g' "$TMP_SETTINGS"
-                    sed -i 's|\\\\\\$\\{SONAR_TOKEN\\}|$SONAR_TOKEN|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\\${username}|$NEXUS_USER|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\\${password}|$NEXUS_PASS|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\\${nexus_private_ip}|$NEXUS_URL|g' "$TMP_SETTINGS"
+                    sed -i 's|\\\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' "$TMP_SETTINGS"
                     mvn ${mavenGoal} --settings "$TMP_SETTINGS"
                 """
             } finally {
@@ -33,8 +33,8 @@ def runMaven = { mavenGoal ->
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
         withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
-            sh """
-                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+            sh """#!/bin/bash
+                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \\
                   --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
             """
         }
@@ -160,9 +160,9 @@ pipeline {
         }
 
         stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
-        stage('Deploy to Staging') { steps { script { deployAnsible('stage') } } }
-        stage('QA Approval') { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
-        stage('Deploy to Production') { steps { script { deployAnsible('prod') } } }
+        stage('Deploy to Staging')     { steps { script { deployAnsible('stage') } } }
+        stage('QA Approval')           { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
+        stage('Deploy to Production')  { steps { script { deployAnsible('prod') } } }
     }
 
     post {
