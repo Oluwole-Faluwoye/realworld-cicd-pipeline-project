@@ -14,14 +14,21 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                sh """#!/bin/bash
-                    cp "\$MAVEN_SETTINGS" "$TMP_SETTINGS"
-                    sed -i "s|\\\${NEXUS_USER}|$NEXUS_USER|g" "$TMP_SETTINGS"
-                    sed -i "s|\\\${NEXUS_PASS}|$NEXUS_PASS|g" "$TMP_SETTINGS"
-                    sed -i "s|\\\${NEXUS_URL}|$NEXUS_URL|g" "$TMP_SETTINGS"
-                    sed -i "s|\\\${SONAR_TOKEN}|$SONAR_TOKEN|g" "$TMP_SETTINGS"
-                    mvn ${mavenGoal} --settings "$TMP_SETTINGS"
-                """
+                withEnv([
+                    "NEXUS_USER=$NEXUS_USER",
+                    "NEXUS_PASS=$NEXUS_PASS",
+                    "SONAR_TOKEN=$SONAR_TOKEN",
+                    "NEXUS_URL=$NEXUS_URL"
+                ]) {
+                    sh """
+                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
+                        sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
+                        mvn ${mavenGoal} --settings $TMP_SETTINGS
+                    """
+                }
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -29,21 +36,26 @@ def runMaven = { mavenGoal ->
     }
 }
 
-// ---------- Helper: Ansible deploy using Jenkins credentials (secure & AWS-ready) ----------
+// ---------- Helper: Safe Ansible deploy using Jenkins credentials ----------
 def deployAnsible = { envName ->
     withCredentials([
         usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'ANSIBLE_USER', passwordVariable: 'ANSIBLE_PASS'),
         string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
         string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
     ]) {
-        sh(script: """
-            #!/bin/bash
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-
-            ansible-playbook -i "${WORKSPACE}/ansible-config/aws_ec2.yaml" "${WORKSPACE}/deploy.yaml" \\
-              --extra-vars "ansible_user=$ANSIBLE_USER ansible_password=$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-        """, returnStatus: false)
+        withEnv([
+            "ANSIBLE_USER=$ANSIBLE_USER",
+            "ANSIBLE_PASS=$ANSIBLE_PASS",
+            "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY",
+            "AWS_REGION=us-east-2"
+        ]) {
+            sh '''
+                ansible-playbook -i "${WORKSPACE}/ansible-config/aws_ec2.yaml" \
+                                 "${WORKSPACE}/deploy.yaml" \
+                  --extra-vars "ansible_user=$ANSIBLE_USER ansible_password=$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+            '''
+        }
     }
 }
 
@@ -73,6 +85,7 @@ pipeline {
     triggers { githubPush() }
 
     stages {
+
         stage('Pipeline Start') {
             steps { ansiColor('xterm') { echo ">>> Pipeline starting <<<" } }
         }
@@ -145,11 +158,7 @@ pipeline {
         }
 
         stage('SonarQube GateKeeper') {
-            steps {
-                timeout(time: 1, unit: 'HOURS') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
+            steps { timeout(time: 1, unit: 'HOURS') { waitForQualityGate abortPipeline: true } }
         }
 
         stage('Nexus Artifact Upload') {
@@ -157,28 +166,16 @@ pipeline {
                 ansiColor('xterm') {
                     script {
                         echo "Deploying webapp to Nexus via Maven..."
-                        dir('webapp') {
-                            runMaven('deploy')
-                        }
+                        dir('webapp') { runMaven('deploy') }
                     }
                 }
             }
         }
 
-        // ---------- Ansible Deploy Stages ----------
-        stage('Deploy Environments') {
-            steps {
-                script {
-                    def deployEnvironments = ['dev', 'stage', 'prod']
-                    deployEnvironments.each { envName ->
-                        if (envName == 'prod') {
-                            input message: 'Proceed to Production?', ok: 'Deploy'
-                        }
-                        deployAnsible(envName)
-                    }
-                }
-            }
-        }
+        stage('Deploy to Development') { steps { script { deployAnsible('dev') } } }
+        stage('Deploy to Staging') { steps { script { deployAnsible('stage') } } }
+        stage('QA Approval') { steps { input message: 'Proceed to Production?', ok: 'Deploy' } }
+        stage('Deploy to Production') { steps { script { deployAnsible('prod') } } }
     }
 
     post {
