@@ -14,14 +14,21 @@ def runMaven = { mavenGoal ->
         configFileProvider([configFile(fileId: 'maven-settings-template', variable: 'MAVEN_SETTINGS')]) {
             def TMP_SETTINGS = "${env.WORKSPACE}/tmp-settings.xml"
             try {
-                sh """
-                    cp \$MAVEN_SETTINGS $TMP_SETTINGS
-                    sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
-                    sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
-                    sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
-                    sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
-                """
-                sh "mvn ${mavenGoal} --settings $TMP_SETTINGS"
+                withEnv([
+                    "NEXUS_USER=$NEXUS_USER",
+                    "NEXUS_PASS=$NEXUS_PASS",
+                    "SONAR_TOKEN=$SONAR_TOKEN",
+                    "NEXUS_URL=$NEXUS_URL"
+                ]) {
+                    sh """
+                        cp \$MAVEN_SETTINGS $TMP_SETTINGS
+                        sed -i 's|\\\\\${username}|$NEXUS_USER|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${password}|$NEXUS_PASS|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${nexus_private_ip}|$NEXUS_URL|g' $TMP_SETTINGS
+                        sed -i 's|\\\\\${SONAR_TOKEN}|$SONAR_TOKEN|g' $TMP_SETTINGS
+                        mvn ${mavenGoal} --settings $TMP_SETTINGS
+                    """
+                }
             } finally {
                 sh "rm -f $TMP_SETTINGS"
             }
@@ -32,10 +39,12 @@ def runMaven = { mavenGoal ->
 // ---------- Helper: Ansible deploy using Jenkins credential ----------
 def deployAnsible = { envName ->
     withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
-        sh """
-            ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
-              --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
-        """
+        withEnv(["ANSIBLE_USER=$USER_NAME", "ANSIBLE_PASS=$PASSWORD"]) {
+            sh """
+                ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                  --extra-vars "ansible_user=\\\$ANSIBLE_USER ansible_password=\\\$ANSIBLE_PASS hosts=tag_Environment_${envName} workspace_path=$WORKSPACE"
+            """
+        }
     }
 }
 
@@ -126,14 +135,16 @@ pipeline {
                     echo "Using JAVA_HOME = ${env.JAVA_HOME}"
                     sh 'java -version'
 
-                    // Add required --add-opens flags for Java 17
+                    // Java 17 opens for SonarQube
                     withEnv([
                         'MAVEN_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED ' +
                                      '--add-opens java.base/java.io=ALL-UNNAMED ' +
                                      '--add-opens java.base/java.util=ALL-UNNAMED ' +
                                      '--add-opens java.base/java.lang.reflect=ALL-UNNAMED'
                     ]) {
-                        runMaven('sonar:sonar')
+                        withSonarQubeEnv('SonarQube') {
+                            runMaven('sonar:sonar')
+                        }
                     }
                 }
             }
@@ -141,10 +152,8 @@ pipeline {
 
         stage('SonarQube GateKeeper') {
             steps {
-                script {
-                    timeout(time: 1, unit: 'HOURS') {
-                        waitForQualityGate abortPipeline: true
-                    }
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
