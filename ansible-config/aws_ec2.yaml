@@ -1,6 +1,6 @@
 plugin: aws_ec2
 regions:
-  - us-east-1   # replace with your AWS region
+  - us-east-2   # replace with your AWS region
 filters:
   "tag:Environment": ["dev", "stage", "prod"]
   instance-state-name: running
