@@ -10,10 +10,6 @@ pipeline {
     environment {
         WORKSPACE = "${env.WORKSPACE}"
         NEXUS_CREDENTIAL_ID = 'Nexus-Credential'
-        //NEXUS_USER = "$NEXUS_CREDS_USR"
-        //NEXUS_PASSWORD = "$NEXUS_PASS"
-        //NEXUS_URL = "172.31.18.62:8081"
-        //NEXUS_REPOSITORY = "maven_project"
     }
 
     tools {
@@ -80,9 +76,9 @@ pipeline {
                                 -Dsonar.host.url=http://172.31.6.182:9000 \
                                 -Dsonar.login=${SONAR_TOKEN}
                                 """
-                            } // closes withCredentials
-                        } // closes withSonarQubeEnv
-                    } // closes withEnv
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -115,24 +111,30 @@ pipeline {
             }
         }
 
+        // ---- DEPLOY STAGES USING PASSWORD-BASED SSH ----
+
         stage('Deploy to Development Env') {
-            environment {
-                HOSTS = 'dev'
-            }
+            environment { HOSTS = 'dev' }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', passwordVariable: 'PASSWORD', usernameVariable: 'USER_NAME')]) {
-                    sh "ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars \"ansible_user=$USER_NAME hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE\""
+                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                    --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE" \
+                    --ask-pass
+                    """
                 }
             }
         }
 
         stage('Deploy to Staging Env') {
-            environment {
-                HOSTS = 'stage'
-            }
+            environment { HOSTS = 'stage' }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', passwordVariable: 'PASSWORD', usernameVariable: 'USER_NAME')]) {
-                    sh "ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars \"ansible_user=$USER_NAME hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE\""
+                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                    --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE" \
+                    --ask-pass
+                    """
                 }
             }
         }
@@ -144,12 +146,14 @@ pipeline {
         }
 
         stage('Deploy to Production Env') {
-            environment {
-                HOSTS = 'prod'
-            }
+            environment { HOSTS = 'prod' }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', passwordVariable: 'PASSWORD', usernameVariable: 'USER_NAME')]) {
-                    sh "ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml --extra-vars \"ansible_user=$USER_NAME hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE\""
+                withCredentials([usernamePassword(credentialsId: 'Ansible-Credential', usernameVariable: 'USER_NAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    ansible-playbook -i ${WORKSPACE}/ansible-config/aws_ec2.yaml ${WORKSPACE}/deploy.yaml \
+                    --extra-vars "ansible_user=$USER_NAME ansible_password=$PASSWORD hosts=tag_Environment_$HOSTS workspace_path=$WORKSPACE" \
+                    --ask-pass
+                    """
                 }
             }
         }
