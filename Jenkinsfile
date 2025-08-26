@@ -73,7 +73,7 @@ pipeline {
                                      '--add-opens java.base/java.lang.reflect=ALL-UNNAMED'
                     ]) {
                         withSonarQubeEnv('SonarQube') {
-                            withCredentials([string(credentialsId: 'SonarQube-Token', variable: 'SONAR_TOKEN')]) {
+                            withCredentials([string(credentialsId: 'Sonarqube-Token', variable: 'SONAR_TOKEN')]) {
                                 sh """
                                 mvn sonar:sonar \
                                 -Dsonar.projectKey=Java-WebApp-Project \
